@@ -1,0 +1,37 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "description": "Alex",
+    "version": "1.0.0",
+    "title": "HCI-Review-System",
+    "contact": {
+      "email": "alxndrtarasov@gmail.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Places",
+      "description": "Example API for sending reviews and obtaining supported places"
+    }
+  ],
+  "paths": {
+    "/reviewSystem/places/all": {
+      "get": {
+        "tags": [
+          "Get all places"
+        ],
+        "summary": "Returns all places",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}
