@@ -7,7 +7,7 @@ from flask import Flask, request, jsonify
 from textblob import TextBlob
 from random import randint
 from pymongo import MongoClient
-
+from ibm_watson import AssistantV2
 # Azure
 import requests
 # pprint is used to format the JSON response
@@ -74,8 +74,8 @@ class MongoController:
         for_range = 15 if len(array_for_sort) > 15 else len(array_for_sort)
         for i in range(for_range):
             result[array_for_sort[i][0]] = array_for_sort[i][1]
-        logging.debug("tags: "+str(result))
-        print("tags: "+str(result))
+        logging.debug("tags: " + str(result))
+        print("tags: " + str(result))
         logging.debug("all: " + str(all_phrases))
         print("all: " + str(all_phrases))
         self.db.collection.find_one_and_update(
@@ -132,6 +132,14 @@ app = Flask(__name__)
 
 mongo_controller = MongoController("mongodb://35.234.77.26:27017")
 
+assistant = AssistantV2(
+    version='2019-02-28',
+    iam_apikey='YD6wUn7f5hX1ZhPiCA_7Y-iVYYoWRWNBLpvuZymjlCOd',
+    url='https://gateway-fra.watsonplatform.net/assistant/api'
+)
+
+open_sessions = {}
+
 
 def make_answer(polarity):
     logging.debug('Polarity of review is: ' + str(polarity))
@@ -152,15 +160,43 @@ def make_answer(polarity):
         return answer
     else:
         answer = {
-            #Не ошибается тот, кто ничего не делает. Спасибо за ваш отзыв!
-            '1': ("Дерьмо случается. Приходите еще", ("We are sorry", "Нам жаль", "Siamo spiacenti", "申し訳ありません","Lo sentimos", "Pardon", "Es tut mir Leid")),
-            '2': ("Нам жаль, что так вышло! Мы свяжемся с администратором и примем меры. Благодарим за отзыв!", ("We are sorry", "Нам жаль", "Siamo spiacenti", "申し訳ありません","Lo sentimos", "Pardon", "Es tut mir Leid")),
-            '3': ("Мы стараемся постоянно становиться лучше, и ваш отзыв нам очень поможет. Спасибо вам огромное!", ("We are sorry", "Нам жаль", "Siamo spiacenti", "申し訳ありません","Lo sentimos", "Pardon", "Es tut mir Leid"))
+            # Не ошибается тот, кто ничего не делает. Спасибо за ваш отзыв!
+            '1': ("Дерьмо случается. Приходите еще", (
+                "We are sorry", "Нам жаль", "Siamo spiacenti", "申し訳ありません", "Lo sentimos", "Pardon", "Es tut mir Leid")),
+            '2': ("Нам жаль, что так вышло! Мы свяжемся с администратором и примем меры. Благодарим за отзыв!", (
+                "We are sorry", "Нам жаль", "Siamo spiacenti", "申し訳ありません", "Lo sentimos", "Pardon", "Es tut mir Leid")),
+            '3': ("Мы стараемся постоянно становиться лучше, и ваш отзыв нам очень поможет. Спасибо вам огромное!", (
+                "We are sorry", "Нам жаль", "Siamo spiacenti", "申し訳ありません", "Lo sentimos", "Pardon", "Es tut mir Leid"))
         }[str(randint(2, 3))]
         return answer
 
 
-def analyze_review(review):
+def make_watson_answer(review, polarity, place_id):
+    logging.debug('Polarity of review is: ' + str(polarity))
+    print('Polarity of review is: ' + str(polarity))
+    plus_minus = "+" if polarity >= polarity_threshold else "-"
+    if place_id in open_sessions.keys() and open_sessions[place_id] != "":
+        session_id = open_sessions[place_id]
+    else:
+        session_id = assistant.create_session(assistant_id='eeeca3f4-ff14-4412-b588-2da8933c0519').get_result()[
+            "session_id"]
+        open_sessions[place_id] = session_id
+    print(session_id)
+    answer = assistant.message(
+        assistant_id='eeeca3f4-ff14-4412-b588-2da8933c0519',
+        session_id=session_id,
+        input={'message_type': 'text', 'text': review + plus_minus}
+    ).get_result()["output"]["generic"][0]["text"]
+    if "$" in answer:
+        assistant.delete_session(
+            assistant_id='{assistant_id}',
+            session_id='{session_id}'
+        ).get_result()
+    print(answer)
+    return answer.replace("$", "") + plus_minus
+
+
+def analyze_review(review, place_id):
     # testimonial = TextBlob(review)
     sentiment_url = text_analytics_base_url + "sentiment"
     documents = {"documents": [
@@ -171,7 +207,9 @@ def analyze_review(review):
     response = requests.post(sentiment_url, headers=headers, json=documents)
     sentiments = response.json()
     polarity = sentiments["documents"][0]["score"]
-    answer = make_answer(float(polarity))
+    mongo_controller.save_review(place_id, review, polarity)
+    answer = make_watson_answer(review, float(polarity), place_id)
+
     return answer
 
 
@@ -197,10 +235,21 @@ def process_review():
     place_id = request.json["place_id"]
     review_text = request.json["review"]["speech"]
     testimonial = TextBlob(review_text)
-    mongo_controller.save_review(place_id, review_text, testimonial.polarity)
+
     # ast.literal_eval
-    return jsonify(analyze_review(review_text)), 201
+    return analyze_review(review_text, place_id), 201
 
 
 if __name__ == '__main__':
+    # print(datetime.datetime.now())
+    # sentiment_url = text_analytics_base_url + "sentiment"
+    # documents = {"documents": [
+    #     {"id": "1", "language": language,
+    #      "text": "the pizza was cold"}
+    # ]}
+    # headers = {"Ocp-Apim-Subscription-Key": subscription_key}
+    # response = requests.post(sentiment_url, headers=headers, json=documents)
+    # sentiments = response.json()
+    # polarity = sentiments["documents"][0]["score"]
+    # print(datetime.datetime.now())
     app.run()
